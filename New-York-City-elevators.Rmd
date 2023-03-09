@@ -1,0 +1,249 @@
+---
+title: "New York City elevators"
+author: "Bernadett Piros"
+date: "2023-03-07"
+output: html_document
+---
+
+This is an analysis of New York City elevators. The data comes from TidyTuesday (2022-12-06). This data contains a set of the registered elevator devices in New York City.
+
+The goal of this analysis is to get answer to questions that what kind of elevator devices are in NYC and what their distribution is, what is the relationship between elevator capacity, speed per device type and who are the most popular elevator manufacturers.
+
+Although, the original data was provided by a local government agency, namely by the NYC Department of Buildings, it contains a couple of errors and a lot of missing details - particularly in the technical details.
+
+```{r loading libraries, message=FALSE, warning=FALSE, include=FALSE}
+library(tidyverse)
+library(tidytuesdayR)
+library(janitor)
+library(lubridate)
+library(ggplot2)
+library(ggthemes)
+library(leaflet)
+#loading the data set
+tt <- tt_load("2022-12-06")
+original <- tt$elevators
+#correcting a coordinate error
+raw <- original
+raw[64009, 28] = 40.62630
+raw[64009, 29] = -73.98158
+# cleaning by fixing zip codes and changing data types
+cleaned <- raw %>%
+  clean_names() %>% 
+  mutate(zip_code = str_sub(as.character(na_if(zip_code, 0)), 1,5),  
+         dv_speed_fpm = as.numeric(dv_speed_fpm),
+         dv_floor_to = as.numeric(dv_floor_to),
+         dv_floor_from = as.numeric(dv_floor_from),
+         across(ends_with("_date"), ymd)) %>% 
+  select(longitude, latitude, dv_device_number, device_type, dv_device_status_description,
+         bin, dv_floor_from, dv_floor_to, house_number, street_name, zip_code, borough, dv_manufacturer,
+         dv_speed_fpm, dv_capacity_lbs, dv_approval_date, dv_lastper_insp_date)
+cleaned
+```
+
+# What kind of elevator devices are in New York and what their distribution is?
+
+New York City, home of skycrapers, had more than 76000 elevators in 2015, most of them active. Each day these elevators move millions of people up and down and lift huge amount of cargo and items in every size.
+
+Almost 5% of elevators belong to the New York City Housing Authority, which provides public housing and which is the largest public housing authority in North America.
+
+Nearly 2% of the elevators were dismantled. Dismantling allows for future restoration of an elevator but no longer requires annual permits or inspections.
+
+```{r number of devices, echo=FALSE, message=FALSE, warning=FALSE}
+s <- cleaned %>% 
+  count(dv_device_status_description, sort = TRUE) %>% 
+  mutate(percent = (n/sum(n)) * 100)
+knitr::kable(s, digits = c(0, 0, 2), col.names = c("Status", "Number", "Percent"), caption = "Distribution per status")
+```
+
+Manhattan has the highest number of elevators which makes it the elevator king of the city, followed by Brooklyn with the second highest number but overall elevators are steadily spread over the city.
+
+```{r devices per borough, echo=FALSE, message=FALSE, warning=FALSE}
+b <- cleaned %>% 
+  drop_na(borough) %>% 
+  count(borough, sort = TRUE) %>% 
+  mutate(percent = (n/sum(n)) * 100)
+knitr::kable(b, digits = c(0, 0, 2), col.names = c("Borough", "Number", "Percent"), caption = "Distribution per borough")
+```
+
+Most of the elevator devices are passenger elevators. The second largest group is freight, the third largest one is the escalator while the number of other types are smaller.
+
+```{r devices per type, echo=FALSE}
+d <- cleaned %>% 
+  count(device_type, sort = TRUE) %>% 
+  mutate(percent = (n/sum(n)) * 100)
+knitr::kable(d, digits = c(0, 0, 2), col.names = c("Device type", "Number", "Percent"), caption = "Distribution per device type")
+```
+
+Passenger elevators are wide spread across all boroughs of New York City. Freight elevators, the second largest group, are mostly located in Brooklyn. The biggest number of escalator, dumbwaiter and sidewalk are located in Manhattan. Private elevators are mostly the characteristic of Manhattan and Brooklyn. A bigger number of handicap lifts can be found in Manhattan, Brooklyn and Queens. Manlifts are mostly located in Brooklyn while Public elevators are in Staten Island.
+
+```{r plot of devices per borough, echo=FALSE}
+cleaned %>% 
+  drop_na() %>% 
+  ggplot(aes(longitude, latitude, color = device_type, aplha = 0.1),
+         position = "identity") +
+  geom_point() +
+  labs( title = "Distribution of elevator devices per borough",
+        caption = "source: Elevators data package by EmilHvitfeldt and NYC Department of Buildings",
+        color = "Device type") +
+  facet_wrap(~ borough, scales = "free") +
+  scale_colour_brewer(palette = "Set1") 
+```
+
+## Who are the most popular elevator manufacturers in NYC?
+
+The very first commercial elevator in New York City was manufactured by OTIS and installed in the Haughwout building in 1857. Since that time OTIS shows a steady popularity. We can say that HOUSING AUTHORITY, PRIVATE RESIDENCE, MRL ELEVATOR and STALEY belong to the more-than-1000-elevator club besides OTIS.
+
+```{r regrouping, message=FALSE, warning=FALSE, include=FALSE}
+top_manufacturers <- cleaned %>%
+  mutate(manufacturer = recode(dv_manufacturer, 
+                               "OTIS" = "OTIS",
+                               "HOUSING AUTHORITY" = "HOUSING AUTHORITY",
+                               "PRIVATE RESIDENCE" = "PRIVATE RESIDENCE",
+                               "MRL ELEVATOR" = "MRL ELEVATOR",
+                               "STALEY" = "STALEY",
+                               "CURTIS" = "CURTIS",
+                               "ARMOR" = "ARMOR",
+                               "WESTINGHOUSE" = "WESTINGHOUSE",
+                               "SEABERG" = "SEABERG",
+                               "OTIS ELEV CO" = "OTIS",
+                               .default = "Other")) 
+top_manufacturer_counted <- top_manufacturers %>% 
+  drop_na(dv_manufacturer) %>% 
+  filter(!manufacturer %in% c("Other")) %>%  
+  count(manufacturer, name = 'count', sort = TRUE)
+```
+
+```{r plot of top manufacturer devices, echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(top_manufacturer_counted, aes(x = manufacturer, y = count, fill = count > 1000)) + 
+  geom_bar(stat = 'identity') + 
+  geom_text(aes(label = count), hjust = 1.3, colour = "white", fontface = "bold") +
+  scale_fill_manual(values = c("#E7B800", "#FC4E07")) +
+  labs(title = "Top 9 manufacturers per devices",
+       caption = "source: source: Elevators data package by EmilHvitfeldt and NYC Department of Buildings") +
+  coord_flip() +
+  theme_minimal() +
+  theme(legend.position = "none") 
+```
+
+Surprisingly OTIS is more popular in Brooklyn and Bronx than in Manhattan. Elevators of the top 9 manufacturers are presented in Manhattan, Brooklyn, Bronx and Queens while Staten Island owns a less diverse distribution of devices.
+
+```{r top manufacturer devices per borough, echo=FALSE, message=FALSE, warning=FALSE}
+top_by_borough_counted <- top_manufacturers %>% 
+  group_by(manufacturer, borough) %>% 
+  drop_na(dv_manufacturer, borough) %>% 
+  filter(!manufacturer %in% c("Other")) %>%  
+  count(manufacturer, name = 'count', sort = TRUE)
+top_by_borough_counted %>% 
+  drop_na(borough) %>% 
+  ggplot() +
+  geom_bar(aes(x = manufacturer, y = count, fill = manufacturer), stat = 'identity') +
+  labs(title = "Top 9 popular manufacturers per borough",
+       caption = "source: Elevators data package by EmilHvitfeldt and NYC Department of Buildings") +
+  facet_wrap(~ borough) +
+  scale_fill_manual(values = c("#999999", "#000000", "#E69F00", "#56B4E9",
+                               "#009E73", "#F0E442", "#0072B2", "#D55E00",
+                               "#CC79A7")) +
+  coord_flip() +
+  theme_minimal()
+```
+
+### What is the relationship between elevator capacity, per and device type?
+
+As it was expected, escalators and freight elevators have the biggest capacity. These devices are originally designed to lift enormous loads. 
+
+Note: Some capacity data must be incorrect in this data set because based on Google search the Barclays Center in Brooklyn tends to have the biggest capacity elevator of 80000 lbs.
+
+```{r capacity per device type, echo=FALSE, message=FALSE, warning=FALSE}
+top_manufacturers %>% 
+  drop_na(dv_capacity_lbs, device_type) %>% 
+  ggplot(aes(x= device_type, y= dv_capacity_lbs, fill = device_type)) + 
+  geom_boxplot() +
+  labs(title = "Capacity lbs per device type",
+       caption = "source: Elevators data package by EmilHvitfeldt and NYC Department of Buildings",
+       x = "capacity lbs", y = "device type") +
+  coord_flip() +
+  theme_minimal()
+```
+With regards to speed, passenger elevators cannot be beat. To lessen the time residents have to spend in elevators, more and more residental towers are being equipped with high-speed elevators.
+
+Note: There are some definitely incorrect speed data in this data set because based on Google search the fastest elevator in New York City is located in the One World Trade Center and travels at an average speed of 23 mph (~ 2024 fpm).
+
+```{r speed per device type, echo=FALSE, message=FALSE, warning=FALSE}
+top_manufacturers %>% 
+  drop_na(dv_speed_fpm, device_type) %>% 
+  ggplot(aes(x= device_type, y= dv_speed_fpm, fill = device_type)) + 
+  geom_boxplot() +
+  labs(title = "Speed fpm per device type",
+       caption = "source: Elevators data package by EmilHvitfeldt and NYC Department of Buildings",
+       x = "device type", y = "speed fpm") +
+  coord_flip() +
+  theme_minimal()
+```
+If both capacity and speed are considered at the same time, OTIS tends to win the first place.
+
+```{r plotting of capacity and speed per top manufacturer, echo=FALSE, message=FALSE, warning=FALSE}
+top_manufacturers %>%
+  filter(!manufacturer %in% c("Other") & !is.na(manufacturer)) %>% 
+  ggplot(aes(x = dv_capacity_lbs, y = dv_speed_fpm, color = manufacturer)) +
+  geom_jitter() +
+  labs(title = "Relationship between capacity and speed per top manufacturer",
+       caption = "source: Elevators data package by EmilHvitfeldt and NYC Department of Buildings",
+       x = "capacity lbs", y = "speed fpm") +
+  scale_colour_brewer(palette = "Set1") +
+  theme_minimal()
+```
+
+Elevators are a part of everyday life, without them, the skyline of New York City would look entirely different. They have significant impact on industry, housing and economy. If they break down, or there are disruptions, whether in a luxury building or at an industrial complex, it is cruical to get them amended or replaced as soon as possible. This is why it is so important to have an up-to-date data that can be analysed to draw conclusions that can help to support all elevator maintenance challenges.
+
+#### Appendix
+
+Zoom to the map to find where the active freight elevator devices above 40000 lbs capacity with known manufacturer are located.
+
+```{r mapping the active freight elevator devices above 40000 lbs capacity with known manufacturer, echo=FALSE, message=FALSE, warning=FALSE}
+pal <- colorNumeric("darkgreen", domain = top_manufacturers$dv_capacity_lbs)
+biggest_f <- top_manufacturers %>% 
+  filter(dv_device_status_description == "ACTIVE",
+         device_type == "Freight (F)",
+         dv_capacity_lbs > 40000) 
+leaflet(biggest_f) %>% 
+  addTiles() %>% 
+  addCircles(color = ~ pal(dv_capacity_lbs))
+```
+
+
+Zoom to the map to find where the active passenger elevator devices above 2000 fmp speed with known manufacturer are located.
+
+```{r mapping the active passenger elevator devices above 2000 fmp speed with known manufacturer, echo=FALSE, message=FALSE, warning=FALSE}
+pal2 <- colorNumeric("red", domain = top_manufacturers$dv_speed_fpm)
+biggest_f <- top_manufacturers %>% 
+  filter(dv_device_status_description == "ACTIVE",
+         device_type == "Passenger Elevator (P)",
+         dv_speed_fpm > 2000) 
+leaflet(biggest_f) %>% 
+  addTiles() %>% 
+  addCircles(color = ~ pal2(dv_speed_fpm))
+```
+
+Zoom to the map to find where the dismantled elevator devices with known manufacturer are located.
+
+```{r mapping dismantled elevator devices with known manufacturer, echo=FALSE, message=FALSE, warning=FALSE}
+dismantled <- top_manufacturers %>% 
+  filter(!manufacturer %in% c("Other") & !is.na(manufacturer)) %>% 
+  filter(dv_device_status_description == "DISMANTLED")
+leaflet(dismantled) %>% 
+  addTiles() %>% 
+  addCircles(lng = ~ longitude, lat = ~ latitude)
+```
+
+Citations
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+citation()
+citation("tidytuesdayR")
+citation("tidyverse")
+citation("janitor")
+citation("lubridate")
+citation("ggplot2")
+citation("ggthemes")
+citation("leaflet")
+```
+
